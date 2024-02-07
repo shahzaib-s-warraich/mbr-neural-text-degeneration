@@ -17,7 +17,7 @@ model = MBR(GPT2LMHeadModel).from_pretrained("gpt2", pad_token_id=tokenizer.eos_
 metric = load('rouge')
 
 # Configure MBR decoding configuration
-mbr_config = MBRConfig(num_samples=10, num_references=10, metric=metric)
+mbr_config = MBRConfig(num_samples=10, num_references=10, metric=metric, metric_output_field="rouge1")
 
 # Configure sampling configuration
 generation_config_eta = GenerationConfig(do_sample=True, eta_cutoff=0.9, max_new_tokens=50)
