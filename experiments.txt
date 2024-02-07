@@ -1,4 +1,4 @@
-Text Generation metrics to be used: MAUVE, BLEURT
+Text Generation metrics to be used: MAUVE, ROUGE
 
 Exps to run: 
 
