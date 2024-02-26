@@ -1,38 +1,55 @@
-from transformers import pipeline, GenerationConfig, GPT2Tokenizer, GPT2LMHeadModel
+import evaluate
+import torch
+from datasets import load_dataset
+from tqdm import tqdm
+from transformers import T5ForConditionalGeneration, AutoTokenizer, pipeline, GenerationConfig
 from mbr import MBR, MBRConfig
-from evaluate import load
 
 
-# ----------------------- Greedy Text Generation MBR (eta (local typical and epsilon), epsilon, top-p, top-k) ROUGE benchmark ---------------------------
+model_name = "t5-base"
+tokenizer = AutoTokenizer.from_pretrained(model_name, model_max_length=2048)
 
-#------- load model ----------
-# Load tokenizer
-tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+model = MBR(T5ForConditionalGeneration).from_pretrained(model_name)
 
-# Load model
-model = MBR(GPT2LMHeadModel).from_pretrained("gpt2", pad_token_id=tokenizer.eos_token_id, eos_token_id=tokenizer.eos_token_id)
+summarization_pipeline = pipeline(
+    "summarization",
+    model=model,
+    tokenizer=tokenizer,
+    device=(0 if torch.cuda.is_available() else -1),
+)
+evaluation_metric_rouge = evaluate.load("rouge")
+dataset = load_dataset("cnn_dailymail", "3.0.0", split="test").select(range(100))
 
-#------- set up configuration ---------
-# Load metric
-metric = load('rouge')
-
-# Configure MBR decoding configuration
-mbr_config = MBRConfig(num_samples=10, num_references=10, metric=metric, metric_output_field="rouge1")
+# MBR
+mbr_config = MBRConfig()
+mbr_config.num_samples = 30
+mbr_config.num_references = 30
+mbr_config.metric = "rouge"
+mbr_config.metric_output_field = "rouge1"
 
 # Configure sampling configuration
-generation_config_eta = GenerationConfig(do_sample=True, eta_cutoff=0.9, max_new_tokens=50)
-generation_config_eps = GenerationConfig(do_sample=True, epsilon_cutoff=0.9, max_new_tokens=50)
-generation_config_top_p = GenerationConfig(do_sample=True, top_p=0.1, max_new_tokens=50)
-generation_config_top_k = GenerationConfig(do_sample=True, top_k=3, max_new_tokens=50)
+generation_config_eta = GenerationConfig(do_sample=True, eta_cutoff=0.9)
+generation_config_eps = GenerationConfig(do_sample=True, epsilon_cutoff=0.9)
+generation_config_top_p = GenerationConfig(do_sample=True, top_p=0.1)
+generation_config_top_k = GenerationConfig(do_sample=True, top_k=3)
 
 sampling_configs = {"eta":generation_config_eta, "eps":generation_config_eps, "top-p":generation_config_top_p, "top-k":generation_config_top_k}
+rouge_benchmark = {'eta':0.0, 'eps':0.0, 'top-p':0.0, 'top-k':0.0}
 
-# Set up text generator
-generator = pipeline("text-generation", model=model, tokenizer=tokenizer)
+for sampling, generation_config in sampling_configs.items():
+    summaries = []
+    outputs = summarization_pipeline(
+        dataset["article"],
+        mbr_config=mbr_config,
+        generation_config=generation_config,
+        tokenizer=tokenizer,
+        max_length = 50,
+        truncation=False,
+        progress_bar=True,
+        batch_size=32
+    )
 
-#------ inference --------
-for name, sampling_config in sampling_configs.items():
-    output = generator("Joe Biden", mbr_config = mbr_config, generation_config=sampling_config, tokenizer=tokenizer)
-    print(f"response:", output)
-    res = metric.compute(predictions=[output], references=["Joseph Robinette Biden Jr. is an American politician who is the 46th and current president of the United States. A member of the Democratic Party, he previously served as the 47th vice president from 2009 to 2017 under President Barack Obama and represented Delaware in the United States Senate from 1973 to 2009."])
-    print(f"rouge benchmark for {name} sampling:", res)
+    for output in outputs:
+        summaries.append(output["summary_text"])
+    rouge_benchmark[sampling] = evaluation_metric_rouge.compute(predictions=summaries, references=dataset["highlights"])
+print(rouge_benchmark)
